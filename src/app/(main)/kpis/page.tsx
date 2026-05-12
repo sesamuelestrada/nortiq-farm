@@ -1,11 +1,11 @@
 import { createClient } from '@/lib/supabase/server'
 import { KpiCard } from '@/features/kpis/components/KpiCard'
-import { MonthlyCostChart } from '@/features/kpis/components/MonthlyCostChart'
 import { format, subMonths, startOfMonth, endOfMonth, differenceInDays } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { DollarSign, TrendingUp, CheckCircle, AlertTriangle, Truck, Calendar, BarChart3, ShieldAlert, Wrench, Timer, Activity } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import Link from 'next/link'
+import { MonthlyCostChartWrapper as MonthlyCostChart } from '@/features/kpis/components/MonthlyCostChartWrapper'
 
 async function getKpiData() {
   const supabase = await createClient()
@@ -15,12 +15,17 @@ async function getKpiData() {
   const thisMonthEnd = endOfMonth(now)
   const lastMonthStart = startOfMonth(subMonths(now, 1))
   const lastMonthEnd = endOfMonth(subMonths(now, 1))
-
+  const yearStart = new Date(now.getFullYear(), 0, 1)
+  const twelveMonthsAgo = startOfMonth(subMonths(now, 11))
   const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
   const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000)
 
   const [
-    { data: allLogs },
+    { data: thisMonthLogs },
+    { data: lastMonthData },
+    { data: yearData },
+    { data: typeLogs },
+    { data: chartLogs },
     { data: assets },
     { data: openFindings },
     { data: closedFindingsThisMonth },
@@ -28,44 +33,63 @@ async function getKpiData() {
     { data: resolvedFindings90d },
     { data: recentLogs30d },
   ] = await Promise.all([
-    supabase.from('maintenance_logs').select('cost_estimate, created_at, asset_id, performed_by_name, type').order('created_at', { ascending: false }),
+    // This month: cost + asset breakdown
+    supabase.from('maintenance_logs')
+      .select('cost_estimate, asset_id, performed_by_name')
+      .gte('created_at', thisMonthStart.toISOString())
+      .lte('created_at', thisMonthEnd.toISOString()),
+    // Last month: cost only
+    supabase.from('maintenance_logs')
+      .select('cost_estimate')
+      .gte('created_at', lastMonthStart.toISOString())
+      .lte('created_at', lastMonthEnd.toISOString()),
+    // This year: cost only
+    supabase.from('maintenance_logs')
+      .select('cost_estimate')
+      .gte('created_at', yearStart.toISOString()),
+    // All time: type + asset_id only (for preventive/corrective + problematic asset)
+    supabase.from('maintenance_logs')
+      .select('type, asset_id'),
+    // Last 12 months: cost + date (for chart)
+    supabase.from('maintenance_logs')
+      .select('cost_estimate, created_at')
+      .gte('created_at', twelveMonthsAgo.toISOString()),
     supabase.from('assets').select('id, name, status'),
     supabase.from('maintenance_findings').select('id, severity').eq('status', 'open'),
-    supabase.from('maintenance_findings').select('id').eq('status', 'resolved').gte('resolved_at', thisMonthStart.toISOString()).lte('resolved_at', thisMonthEnd.toISOString()),
-    supabase.from('maintenance_schedules').select('id, title, next_due_date, asset_id, assets(name)').eq('status', 'active').gte('next_due_date', now.toISOString().split('T')[0]).lte('next_due_date', new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]).order('next_due_date', { ascending: true }),
-    supabase.from('maintenance_findings').select('created_at, resolved_at').eq('status', 'resolved').gte('resolved_at', ninetyDaysAgo.toISOString()).not('resolved_at', 'is', null),
-    supabase.from('maintenance_logs').select('asset_id').gte('created_at', thirtyDaysAgo.toISOString()),
+    supabase.from('maintenance_findings').select('id').eq('status', 'resolved')
+      .gte('resolved_at', thisMonthStart.toISOString())
+      .lte('resolved_at', thisMonthEnd.toISOString()),
+    supabase.from('maintenance_schedules')
+      .select('id, title, next_due_date, asset_id, assets(name)')
+      .eq('status', 'active')
+      .gte('next_due_date', now.toISOString().split('T')[0])
+      .lte('next_due_date', new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0])
+      .order('next_due_date', { ascending: true }),
+    supabase.from('maintenance_findings')
+      .select('created_at, resolved_at')
+      .eq('status', 'resolved')
+      .gte('resolved_at', ninetyDaysAgo.toISOString())
+      .not('resolved_at', 'is', null),
+    supabase.from('maintenance_logs')
+      .select('asset_id')
+      .gte('created_at', thirtyDaysAgo.toISOString()),
   ])
 
-  const logs = allLogs ?? []
-
   // This month cost
-  const thisMonthLogs = logs.filter(l => {
-    if (!l.created_at) return false
-    const d = new Date(l.created_at)
-    return d >= thisMonthStart && d <= thisMonthEnd
-  })
-  const thisMonthCost = thisMonthLogs.reduce((s, l) => s + (l.cost_estimate ?? 0), 0)
+  const thisMonthCost = (thisMonthLogs ?? []).reduce((s, l) => s + (l.cost_estimate ?? 0), 0)
 
   // Last month cost
-  const lastMonthLogs = logs.filter(l => {
-    if (!l.created_at) return false
-    const d = new Date(l.created_at)
-    return d >= lastMonthStart && d <= lastMonthEnd
-  })
-  const lastMonthCost = lastMonthLogs.reduce((s, l) => s + (l.cost_estimate ?? 0), 0)
+  const lastMonthCost = (lastMonthData ?? []).reduce((s, l) => s + (l.cost_estimate ?? 0), 0)
   const costDiff = lastMonthCost > 0 ? ((thisMonthCost - lastMonthCost) / lastMonthCost) * 100 : 0
 
   // Year cost + projection
-  const yearStart = new Date(now.getFullYear(), 0, 1)
-  const yearLogs = logs.filter(l => l.created_at && new Date(l.created_at) >= yearStart)
-  const yearCost = yearLogs.reduce((s, l) => s + (l.cost_estimate ?? 0), 0)
+  const yearCost = (yearData ?? []).reduce((s, l) => s + (l.cost_estimate ?? 0), 0)
   const monthsPassed = now.getMonth() + 1
   const projectedYear = monthsPassed > 0 ? (yearCost / monthsPassed) * 12 : 0
 
   // Most expensive asset this month
   const costByAsset: Record<string, number> = {}
-  for (const l of thisMonthLogs) {
+  for (const l of (thisMonthLogs ?? [])) {
     if (!l.asset_id) continue
     costByAsset[l.asset_id] = (costByAsset[l.asset_id] ?? 0) + (l.cost_estimate ?? 0)
   }
@@ -73,18 +97,16 @@ async function getKpiData() {
   const topAsset = topAssetId ? (assets ?? []).find(a => a.id === topAssetId) : null
   const topAssetCost = topAssetId ? costByAsset[topAssetId] : 0
 
-  // ── NEW KPIs ──────────────────────────────────────────────────────────────
-
-  // % Preventivo vs Correctivo
-  const preventiveCount = logs.filter(l => l.type === 'preventive').length
-  const correctiveCount = logs.filter(l => l.type === 'corrective').length
+  // % Preventivo vs Correctivo (typeLogs: all time, 2 fields only)
+  const preventiveCount = (typeLogs ?? []).filter(l => l.type === 'preventive').length
+  const correctiveCount = (typeLogs ?? []).filter(l => l.type === 'corrective').length
   const totalTyped = preventiveCount + correctiveCount
   const preventivePct = totalTyped > 0 ? Math.round((preventiveCount / totalTyped) * 100) : 0
   const correctivePct = totalTyped > 0 ? 100 - preventivePct : 0
 
-  // Activo más problemático (más correctivos histórico)
+  // Activo más problemático (typeLogs)
   const correctiveByAsset: Record<string, number> = {}
-  for (const l of logs.filter(x => x.type === 'corrective')) {
+  for (const l of (typeLogs ?? []).filter(x => x.type === 'corrective')) {
     if (!l.asset_id) continue
     correctiveByAsset[l.asset_id] = (correctiveByAsset[l.asset_id] ?? 0) + 1
   }
@@ -92,7 +114,7 @@ async function getKpiData() {
   const problemAsset = problemAssetId ? (assets ?? []).find(a => a.id === problemAssetId) : null
   const problemAssetCount = problemAssetId ? correctiveByAsset[problemAssetId] : 0
 
-  // Tiempo promedio resolución de hallazgos (últimos 90 días)
+  // Tiempo promedio resolución (últimos 90 días)
   const resolutionDays = (resolvedFindings90d ?? [])
     .filter(f => f.created_at && f.resolved_at)
     .map(f => Math.max(0, differenceInDays(new Date(f.resolved_at!), new Date(f.created_at!))))
@@ -113,13 +135,13 @@ async function getKpiData() {
     .filter(a => a.status === 'operational' && !activeAssetIds.has(a.id))
     .slice(0, 5)
 
-  // Monthly data for chart (last 12 months)
+  // Monthly chart (last 12 months, from chartLogs)
   const monthlyData = []
   for (let i = 11; i >= 0; i--) {
     const d = subMonths(now, i)
     const start = startOfMonth(d)
     const end = endOfMonth(d)
-    const monthLogs = logs.filter(l => {
+    const monthLogs = (chartLogs ?? []).filter(l => {
       if (!l.created_at) return false
       const date = new Date(l.created_at)
       return date >= start && date <= end
@@ -131,7 +153,7 @@ async function getKpiData() {
   }
   const avgCost = monthlyData.reduce((s, m) => s + m.costo, 0) / 12
 
-  // Fleet uptime (% operational)
+  // Fleet uptime
   const totalAssets = (assets ?? []).length
   const operationalAssets = (assets ?? []).filter(a => a.status === 'operational').length
   const uptimePct = totalAssets > 0 ? Math.round((operationalAssets / totalAssets) * 100) : 0
@@ -155,7 +177,6 @@ async function getKpiData() {
       asset_id: string
       assets: { name: string } | null
     }[],
-    // New KPIs
     preventivePct,
     correctivePct,
     totalTyped,
@@ -225,7 +246,6 @@ export default async function KpisPage() {
             accent="slate"
           />
         )}
-        {/* New KPI cards */}
         <KpiCard
           title="Preventivo vs Correctivo"
           value={`${kpi.preventivePct}%`}
@@ -321,7 +341,7 @@ export default async function KpisPage() {
         </Card>
       )}
 
-      {/* Monthly Chart */}
+      {/* Monthly Chart (lazy loaded) */}
       <MonthlyCostChart data={kpi.monthlyData} avgCost={kpi.avgCost} />
 
       {/* Upcoming 7 days */}

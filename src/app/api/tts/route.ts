@@ -16,6 +16,7 @@ export async function GET(request: NextRequest) {
     voice: 'nova',
     input: text,
     response_format: 'mp3',
+    speed: 1.0,
   })
 
   // Stream OpenAI response body directly — no buffering, browser plays as bytes arrive

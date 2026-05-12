@@ -8,6 +8,33 @@ import { cn } from '@/lib/utils'
 import type { AgentResult } from '../types'
 import type { ConversationHistoryItem } from '@/lib/ai/agent-runner'
 
+function normalizeForSpeech(text: string): string {
+  return text
+    .replace(/\bJD\b/g, 'J D')
+    .replace(/\bNH\b/g, 'N H')
+    .replace(/\b([A-Z])(\d{3,})\b/g, '$1 $2')   // T680 → T 680
+    .replace(/\b([A-Z])(\d{1,2})\b/g, '$1 $2')   // T7 → T 7
+    .replace(/(\d{3,})([A-Z])\b/g, '$1 $2')       // 6155M → 6155 M
+}
+
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, '')        // code blocks
+    .replace(/`([^`]+)`/g, '$1')           // inline code
+    .replace(/\*\*(.+?)\*\*/g, '$1')       // **bold**
+    .replace(/\*(.+?)\*/g, '$1')           // *italic*
+    .replace(/__(.+?)__/g, '$1')           // __bold__
+    .replace(/_([^_]+)_/g, '$1')           // _italic_
+    .replace(/#+\s*/g, '')                 // headings
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // [links](url)
+    .replace(/^[-*+]\s+/gm, '')            // bullet points
+    .replace(/^\d+\.\s+/gm, '')            // numbered lists
+    .replace(/\n{2,}/g, '. ')             // double newlines → period
+    .replace(/\n/g, ', ')                  // single newlines → comma
+    .replace(/\s{2,}/g, ' ')              // collapse spaces
+    .trim()
+}
+
 type UIState = 'idle' | 'recording' | 'processing' | 'showing' | 'error'
 
 interface ConversationTurn {
@@ -62,7 +89,7 @@ export function FloatingVoiceBar() {
   const scrollRef = useRef<HTMLDivElement>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
-  const ttsQueueRef = useRef<string[]>([])
+  const ttsQueueRef = useRef<HTMLAudioElement[]>([])
   const isPlayingRef = useRef(false)
   const isDesktop = useIsDesktop()
 
@@ -81,35 +108,36 @@ export function FloatingVoiceBar() {
   }, [open, uiState])
 
   const playNextInQueue = useCallback(() => {
-    const next = ttsQueueRef.current.shift()
-    if (!next) {
+    const audio = ttsQueueRef.current.shift()
+    if (!audio) {
       isPlayingRef.current = false
       setSpeaking(false)
       return
     }
     isPlayingRef.current = true
     setSpeaking(true)
-    // Point the Audio element directly at the streaming endpoint —
-    // the browser starts playing as soon as the first bytes arrive, no blob wait
-    const url = `/api/tts?text=${encodeURIComponent(next)}`
-    const audio = new Audio(url)
     audioRef.current = audio
     audio.onended = () => playNextInQueue()
     audio.onerror = () => playNextInQueue()
     void audio.play().catch(() => playNextInQueue())
   }, [])
 
-  // Enqueue a sentence — starts playing immediately if queue was empty
+  // Enqueue a sentence — strips markdown, normalizes abbreviations, pre-fetches audio
   const speak = useCallback((text: string) => {
     if (!voiceEnabled || !text.trim()) return
-    ttsQueueRef.current.push(text)
+    const clean = normalizeForSpeech(stripMarkdown(text))
+    if (!clean) return
+    const audio = new Audio(`/api/tts?text=${encodeURIComponent(clean)}`)
+    audio.preload = 'auto'
+    ttsQueueRef.current.push(audio)
     if (!isPlayingRef.current) playNextInQueue()
   }, [voiceEnabled, playNextInQueue])
 
   const stopSpeaking = useCallback(() => {
+    ttsQueueRef.current.forEach(a => { a.src = '' })
     ttsQueueRef.current = []
     isPlayingRef.current = false
-    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null }
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current.src = ''; audioRef.current = null }
     setSpeaking(false)
   }, [])
 
@@ -201,7 +229,8 @@ export function FloatingVoiceBar() {
             setUiState(s => s === 'processing' ? 'showing' : s)
             // Speak each complete sentence as it arrives — don't wait for done
             const pending = accText.slice(spokenIndex)
-            const sentenceMatch = pending.match(/^([\s\S]*?[.!?])\s+/)
+            // (?<!\d) evita que "1." o "2." de listas numeradas cuenten como fin de oración
+            const sentenceMatch = pending.match(/^([\s\S]*?(?<!\d)[.!?])(\s+|$)/)
             if (sentenceMatch) {
               speak(sentenceMatch[1].trim())
               spokenIndex += sentenceMatch[0].length

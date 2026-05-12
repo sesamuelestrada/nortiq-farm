@@ -1,5 +1,6 @@
 import { createServiceClient } from '@/lib/supabase/service'
-import { format } from 'date-fns'
+import { format, differenceInDays, parseISO } from 'date-fns'
+import { es } from 'date-fns/locale'
 
 interface FindingRow {
   id: string
@@ -23,6 +24,7 @@ export async function buildMaintenanceContext(): Promise<string> {
   try {
     const supabase = createServiceClient()
     const today = new Date()
+    const todayStr = format(today, 'yyyy-MM-dd')
     const in14Days = new Date(today.getTime() + 14 * 24 * 60 * 60 * 1000)
 
     const [findingsResult, schedulesResult] = await Promise.all([
@@ -54,8 +56,8 @@ export async function buildMaintenanceContext(): Promise<string> {
         const severityTag = f.severity === 'critical' ? ' [CRÍTICO]'
           : f.severity === 'high' ? ' [URGENTE]'
           : ''
-        const followUp = f.follow_up_date ? ` — revisar el ${format(new Date(f.follow_up_date), 'dd/MM/yyyy')}` : ''
-        const since = format(new Date(f.created_at), 'dd/MM/yyyy')
+        const followUp = f.follow_up_date ? ` — revisar el ${format(parseISO(f.follow_up_date), "d 'de' MMMM", { locale: es })}` : ''
+        const since = format(new Date(f.created_at), "d 'de' MMMM", { locale: es })
         lines.push(`  - ${assetName}: ${f.description}${severityTag} (desde ${since}${followUp})`)
       }
     }
@@ -70,15 +72,15 @@ export async function buildMaintenanceContext(): Promise<string> {
       const currentHours = s.assets?.current_hours ?? null
       const avgHoursPerWeek = s.assets?.avg_hours_per_week ?? null
 
-      // Calendar-based check
+      // Calendar-based check (compare date strings to avoid timezone issues)
       if (s.next_due_date) {
-        const dueDate = new Date(s.next_due_date)
-        const daysUntil = Math.ceil((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+        const daysUntil = differenceInDays(parseISO(s.next_due_date), parseISO(todayStr))
+        const dueDate = parseISO(s.next_due_date)
 
+        const dueDateLabel = format(dueDate, "d 'de' MMMM", { locale: es })
         if (daysUntil < 0) {
-          overdueByCalendar.push(`  - ${assetName}: ${s.title} — VENCIDO ${Math.abs(daysUntil)} días`)
+          overdueByCalendar.push(`  - ${assetName}: ${s.title} — VENCIDO hace ${Math.abs(daysUntil)} días (venció el ${dueDateLabel})`)
         } else if (dueDate <= in14Days) {
-          // Compute hours remaining hint if we have usage data
           let hoursHint = ''
           if (s.next_due_hours && currentHours && avgHoursPerWeek) {
             const hoursRemaining = s.next_due_hours - currentHours
@@ -87,7 +89,8 @@ export async function buildMaintenanceContext(): Promise<string> {
               ? ` (~${Math.round(hoursRemaining)}h restantes, ~${weeksRemaining.toFixed(1)} semanas al ritmo actual)`
               : ` (horas ya superadas)`
           }
-          upcoming.push(`  - ${assetName}: ${s.title} — en ${daysUntil} días${hoursHint}`)
+          const whenLabel = daysUntil === 0 ? 'hoy' : daysUntil === 1 ? 'mañana' : `en ${daysUntil} días`
+          upcoming.push(`  - ${assetName}: ${s.title} — vence el ${dueDateLabel} (${whenLabel})${hoursHint}`)
         }
       }
 
