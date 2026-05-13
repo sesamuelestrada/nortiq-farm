@@ -19,6 +19,13 @@ const dmMono = DM_Mono({
 export const metadata: Metadata = {
   title: 'Nortiq Farm — Mantenimiento Industrial',
   description: 'Sistema de gestión de mantenimiento para rancho lechero',
+  icons: {
+    icon: [
+      { url: '/favicon.ico', sizes: '32x32' },
+      { url: '/icon.png', sizes: '512x512', type: 'image/png' },
+    ],
+    apple: { url: '/apple-icon.png', sizes: '180x180', type: 'image/png' },
+  },
 }
 
 export default function RootLayout({
