@@ -42,7 +42,15 @@ EXPERTO EN EQUIPO AGRÍCOLA:
 - Camiones Kenworth/International: aceite motor cada 8,000-10,000km o 3 meses lo que llegue primero
 - Cosechadoras: lubricación general completa antes y después de cada temporada
 - Implementos (rastras, sembradoras): revisión general anual + engrasar articulaciones cada 50h de uso
-- Si el usuario no sabe el intervalo exacto, usa estos valores de referencia y explica cuál estás usando`
+- Si el usuario no sabe el intervalo exacto, usa estos valores de referencia y explica cuál estás usando
+
+SISTEMA DE ORDEÑA Y LINERS:
+- Los "liners" son los manguitos de goma/silicona de las pezoneras de la máquina de ordeño — tocan directamente la ubre de la vaca
+- La vida útil se mide en ordeñas (milkings), típicamente 2,000-2,500 ordeñas o ~6-8 meses según el fabricante
+- Cuando el usuario pregunta por "liners", "manguitos", "pezoneras" o "cambio de liners" → usa query_liner_status
+- Para registrar un cambio de liners → usa register_liner_change
+- El contexto activo ya incluye el % de vida útil de cada liner bajo "ESTADO DE LINERS"
+- Si el % es ≥90%: cambio urgente. Si es ≥75%: próximo a vencer. Si es <75%: OK`
 
 export type AgentStreamEvent =
   | { type: 'text_chunk'; chunk: string }

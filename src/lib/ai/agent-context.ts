@@ -20,6 +20,15 @@ interface ScheduleRow {
   assets: { name: string; current_hours: number | null; avg_hours_per_week: number | null } | null
 }
 
+interface LinerConfigRow {
+  asset_id: string
+  cows_count: number
+  milkings_per_day: number
+  liner_life_milkings: number
+  last_change_date: string
+  assets: { name: string } | null
+}
+
 export async function buildMaintenanceContext(): Promise<string> {
   try {
     const supabase = createServiceClient()
@@ -27,7 +36,7 @@ export async function buildMaintenanceContext(): Promise<string> {
     const todayStr = format(today, 'yyyy-MM-dd')
     const in14Days = new Date(today.getTime() + 14 * 24 * 60 * 60 * 1000)
 
-    const [findingsResult, schedulesResult] = await Promise.all([
+    const [findingsResult, schedulesResult, linersResult] = await Promise.all([
       supabase
         .from('maintenance_findings')
         .select('id, description, severity, follow_up_date, created_at, assets(name)')
@@ -39,10 +48,15 @@ export async function buildMaintenanceContext(): Promise<string> {
         .select('id, title, subsystem, next_due_hours, next_due_date, assets(name, current_hours, avg_hours_per_week)')
         .eq('status', 'active')
         .limit(20),
+      supabase
+        .from('liner_configs')
+        .select('asset_id, cows_count, milkings_per_day, liner_life_milkings, last_change_date, assets(name)')
+        .limit(10),
     ])
 
     const findings = (findingsResult.data ?? []) as unknown as FindingRow[]
     const schedules = (schedulesResult.data ?? []) as unknown as ScheduleRow[]
+    const liners = (linersResult.data ?? []) as unknown as LinerConfigRow[]
 
     const lines: string[] = [
       `CONTEXTO ACTIVO AL ${format(today, 'yyyy-MM-dd')}:`,
@@ -123,6 +137,25 @@ export async function buildMaintenanceContext(): Promise<string> {
     // If everything is clean, note it so the AI doesn't fabricate alerts
     if (findings.length === 0 && overdueByCalendar.length === 0 && overdueByHours.length === 0 && upcoming.length === 0) {
       lines.push('Sin hallazgos abiertos ni mantenimientos próximos en los siguientes 14 días.')
+    }
+
+    // ── Liner status ───────────────────────────────────────────────
+    if (liners.length > 0) {
+      lines.push('ESTADO DE LINERS (sala de ordeña):')
+      const todayMidnight = new Date(todayStr + 'T00:00:00')
+      for (const cfg of liners) {
+        const assetName = cfg.assets?.name ?? 'Sistema de ordeña'
+        const lastChange = new Date(cfg.last_change_date + 'T00:00:00')
+        const daysSince = Math.max(0, differenceInDays(todayMidnight, lastChange))
+        const milkingsPerDay = cfg.cows_count * cfg.milkings_per_day
+        const completed = daysSince * milkingsPerDay
+        const pct = Math.min(100, Math.round((completed / cfg.liner_life_milkings) * 100))
+        const remaining = Math.max(0, cfg.liner_life_milkings - completed)
+        const daysLeft = milkingsPerDay > 0 ? Math.round(remaining / milkingsPerDay) : 0
+        const lastChangeLabel = format(lastChange, "d 'de' MMMM 'de' yyyy", { locale: es })
+        const urgency = pct >= 90 ? ' [CAMBIO URGENTE]' : pct >= 75 ? ' [PRÓXIMO A VENCER]' : ''
+        lines.push(`  - ${assetName}: ${pct}% de vida útil usada${urgency} — último cambio el ${lastChangeLabel} — faltan ~${daysLeft} días`)
+      }
     }
 
     return lines.join('\n')

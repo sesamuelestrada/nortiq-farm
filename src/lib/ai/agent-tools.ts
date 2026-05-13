@@ -218,6 +218,33 @@ export const TOOL_DEFINITIONS = [
     },
   },
   {
+    name: 'query_liner_status',
+    description: 'Consulta el estado actual de los liners de la sala de ordeña: % de vida útil usada, días desde el último cambio, días restantes estimados. Úsalo cuando el usuario pregunte por los liners, la sala de ordeña, o cuándo toca cambiar los liners.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        asset_name: {
+          type: 'string',
+          description: 'Nombre del activo (opcional). Si se omite, muestra todos los sistemas de ordeña.',
+        },
+      },
+    },
+  },
+  {
+    name: 'register_liner_change',
+    description: 'Registra un cambio de liners en la sala de ordeña. Actualiza la fecha de último cambio y crea un log de mantenimiento con el costo.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        asset_name: { type: 'string', description: 'Nombre o parte del nombre del activo de ordeña' },
+        cost: { type: 'number', description: 'Costo del cambio de liners en pesos MXN' },
+        performed_by_name: { type: 'string', description: 'Nombre del técnico o mecánico que realizó el cambio' },
+        notes: { type: 'string', description: 'Notas adicionales del cambio' },
+      },
+      required: ['asset_name'],
+    },
+  },
+  {
     name: 'log_partial_maintenance',
     description: 'Registra un mantenimiento donde se completaron algunos trabajos pero otros quedaron pendientes (por falta de refacciones, tiempo, etc.). Automáticamente crea hallazgos para los items diferidos.',
     input_schema: {
@@ -251,6 +278,8 @@ export const TOOL_DEFINITIONS = [
   },
 ]
 
+type QueryLinerStatusInput = { asset_name?: string }
+type RegisterLinerChangeInput = { asset_name: string; cost?: number; performed_by_name?: string; notes?: string }
 type QueryAssetsInput = { status?: string; type?: string; name_contains?: string }
 type QueryMaintenanceInput = { asset_name?: string; type?: string; limit?: number }
 type GetAnalyticsInput = { analysis_type: 'maintenance_types' | 'cost_by_asset' | 'monthly_trend' | 'needs_service' }
@@ -265,7 +294,7 @@ type ResolveFindingInput = { asset_name: string; description_contains: string; a
 type GetOpenItemsInput = { asset_name?: string }
 type LogPartialMaintenanceInput = { asset_name: string; type: string; completed_items: string[]; deferred_items: { description: string; reason?: string }[]; performed_by_name?: string; hours_spent?: number; cost_estimate?: number }
 
-export type ToolInput = QueryAssetsInput | QueryMaintenanceInput | GetAnalyticsInput | CreateAssetInput | CreateMaintenanceInput | UpdateStatusInput | NavigateInput | UpdateAssetHoursInput | ScheduleMaintenanceInput | RecordFindingInput | ResolveFindingInput | GetOpenItemsInput | LogPartialMaintenanceInput
+export type ToolInput = QueryAssetsInput | QueryMaintenanceInput | GetAnalyticsInput | CreateAssetInput | CreateMaintenanceInput | UpdateStatusInput | NavigateInput | UpdateAssetHoursInput | ScheduleMaintenanceInput | RecordFindingInput | ResolveFindingInput | GetOpenItemsInput | LogPartialMaintenanceInput | QueryLinerStatusInput | RegisterLinerChangeInput
 
 export async function executeTool(toolName: string, input: ToolInput): Promise<AgentResult[]> {
   const supabase = createServiceClient()
@@ -730,6 +759,88 @@ export async function executeTool(toolName: string, input: ToolInput): Promise<A
       { type: 'log_created', asset_name: asset.name, log_type: typeLabels[inp.type] ?? inp.type, description: completedDescription },
       ...findingResults,
     ]
+  }
+
+  if (toolName === 'query_liner_status') {
+    const { asset_name } = input as QueryLinerStatusInput
+
+    let query = supabase
+      .from('liner_configs')
+      .select('asset_id, cows_count, milkings_per_day, liner_life_milkings, last_change_date, assets(name)')
+
+    if (asset_name) {
+      const { data: matchedAssets } = await supabase.from('assets').select('id').ilike('name', `%${asset_name}%`)
+      const ids = (matchedAssets ?? []).map(a => a.id)
+      if (ids.length === 0) return [{ type: 'text', content: `No se encontró ningún activo con el nombre "${asset_name}".` }]
+      query = query.in('asset_id', ids)
+    }
+
+    const { data } = await query
+    if (!data?.length) return [{ type: 'text', content: 'No hay configuración de liners registrada.' }]
+
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+
+    const rows = data.map(cfg => {
+      const assetName = (cfg.assets as unknown as { name: string } | null)?.name ?? 'Sistema de ordeña'
+      const lastChange = new Date(cfg.last_change_date + 'T00:00:00')
+      const daysSince = Math.max(0, Math.floor((today.getTime() - lastChange.getTime()) / (1000 * 60 * 60 * 24)))
+      const milkingsPerDay = cfg.cows_count * cfg.milkings_per_day
+      const completed = daysSince * milkingsPerDay
+      const pct = Math.min(100, Math.round((completed / cfg.liner_life_milkings) * 100))
+      const remaining = Math.max(0, cfg.liner_life_milkings - completed)
+      const daysLeft = milkingsPerDay > 0 ? Math.round(remaining / milkingsPerDay) : 0
+      const lastChangeLabel = lastChange.toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' })
+      const urgency = pct >= 90 ? '⚠️ CAMBIO URGENTE' : pct >= 75 ? 'Próximo a vencer' : 'OK'
+      return [assetName, `${pct}%`, urgency, lastChangeLabel, daysLeft > 0 ? `${daysLeft} días` : 'VENCIDO']
+    })
+
+    return [{
+      type: 'table',
+      title: 'Estado de liners — Sala de ordeña',
+      columns: ['Activo', 'Vida útil usada', 'Estado', 'Último cambio', 'Días restantes'],
+      rows,
+    }]
+  }
+
+  if (toolName === 'register_liner_change') {
+    const inp = input as RegisterLinerChangeInput
+
+    const { data: assets } = await supabase.from('assets').select('id, name').ilike('name', `%${inp.asset_name}%`).limit(1)
+    if (!assets?.length) return [{ type: 'text', content: `No se encontró ningún activo con el nombre "${inp.asset_name}".` }]
+
+    const asset = assets[0]
+    const today = new Date().toISOString().split('T')[0]
+
+    const { error: updateError } = await supabase
+      .from('liner_configs')
+      .update({ last_change_date: today })
+      .eq('asset_id', asset.id)
+
+    if (updateError) return [{ type: 'text', content: `Error al actualizar la fecha de cambio de liners: ${updateError.message}` }]
+
+    // Dismiss existing liner alerts for this asset
+    await supabase
+      .from('alerts')
+      .update({ is_read: true })
+      .eq('asset_id', asset.id)
+      .ilike('message', '%liner%')
+      .eq('is_read', false)
+
+    const description = `Cambio de liners${inp.notes ? ` — ${inp.notes}` : ''}`
+    const { error: logError } = await supabase.from('maintenance_logs').insert({
+      asset_id: asset.id,
+      type: 'preventive',
+      description,
+      performed_by_name: inp.performed_by_name,
+      cost_estimate: inp.cost,
+      parts_used: ['liners'],
+      status: 'completed',
+    })
+
+    if (logError) return [{ type: 'text', content: `Cambio registrado pero hubo error al crear el log: ${logError.message}` }]
+
+    return [{ type: 'log_created', asset_name: asset.name, log_type: 'Preventivo', description }]
   }
 
   return [{ type: 'text', content: `Herramienta desconocida: ${toolName}` }]
