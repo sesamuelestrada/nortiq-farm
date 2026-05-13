@@ -21,26 +21,26 @@ const typeConfig = {
   overdue_maintenance: {
     icon: AlertTriangle,
     label: 'Mantenimiento vencido',
-    rowBg: 'bg-amber-50/50',
-    iconBg: 'bg-amber-100',
-    iconColor: 'text-amber-600',
-    badge: 'bg-amber-100 text-amber-700 border-amber-200',
+    rowBg: 'bg-amber-50/50 dark:bg-amber-950/20',
+    iconBg: 'bg-amber-100 dark:bg-amber-900/40',
+    iconColor: 'text-amber-600 dark:text-amber-400',
+    badge: 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800/40',
   },
   critical: {
     icon: AlertTriangle,
     label: 'Crítico',
-    rowBg: 'bg-red-50/50',
-    iconBg: 'bg-red-100',
-    iconColor: 'text-red-600',
-    badge: 'bg-red-100 text-red-700 border-red-200',
+    rowBg: 'bg-red-50/50 dark:bg-red-950/20',
+    iconBg: 'bg-red-100 dark:bg-red-900/40',
+    iconColor: 'text-red-600 dark:text-red-400',
+    badge: 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800/40',
   },
   info: {
     icon: Info,
     label: 'Informativo',
-    rowBg: 'bg-blue-50/20',
-    iconBg: 'bg-blue-100',
-    iconColor: 'text-blue-600',
-    badge: 'bg-blue-100 text-blue-700 border-blue-200',
+    rowBg: 'bg-blue-50/20 dark:bg-blue-950/10',
+    iconBg: 'bg-blue-100 dark:bg-blue-900/40',
+    iconColor: 'text-blue-600 dark:text-blue-400',
+    badge: 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800/40',
   },
 }
 
@@ -96,12 +96,12 @@ export function AlertsTable({ initialAlerts }: Props) {
     <div className="space-y-4">
       {/* Controls */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white p-1 text-sm shadow-sm">
+        <div className="flex items-center gap-1 rounded-lg border border-border bg-card p-1 text-sm shadow-sm">
           {(['unread', 'all', 'read'] as const).map(f => (
             <button
               key={f}
               onClick={() => setFilter(f)}
-              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-all cursor-pointer ${filter === f ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-all cursor-pointer ${filter === f ? 'bg-foreground text-background shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
             >
               {f === 'unread' ? `Sin leer${unreadCount > 0 ? ` (${unreadCount})` : ''}` : f === 'all' ? 'Todas' : 'Leídas'}
             </button>
@@ -110,7 +110,7 @@ export function AlertsTable({ initialAlerts }: Props) {
         {unreadCount > 0 && (
           <button
             onClick={markAllRead}
-            className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm hover:bg-gray-50 transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-sm hover:bg-muted/50 transition-colors cursor-pointer"
           >
             <CheckCheck className="h-3.5 w-3.5" />
             Marcar todas como leídas
@@ -120,11 +120,11 @@ export function AlertsTable({ initialAlerts }: Props) {
 
       {/* Table */}
       {filtered.length === 0 ? (
-        <div className="rounded-xl border border-gray-100 bg-white py-16 text-center text-sm text-gray-400 shadow-sm">
+        <div className="rounded-xl border border-border bg-card py-16 text-center text-sm text-muted-foreground shadow-sm">
           {filter === 'unread' ? 'No hay alertas pendientes. Todo en orden.' : 'No hay alertas en esta categoría.'}
         </div>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm divide-y divide-gray-50">
+        <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm divide-y divide-border/40">
           {filtered.map(alert => {
             const config = typeConfig[alert.type] ?? typeConfig.info
             const Icon = config.icon
@@ -135,13 +135,13 @@ export function AlertsTable({ initialAlerts }: Props) {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start gap-2 flex-wrap">
-                    <p className="text-sm text-gray-800 leading-relaxed flex-1">{alert.message}</p>
+                    <p className="text-sm text-foreground leading-relaxed flex-1">{alert.message}</p>
                     <span className={`flex-shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${config.badge}`}>
                       {config.label}
                     </span>
                   </div>
                   <div className="flex items-center gap-3 mt-1.5">
-                    <span className="text-xs text-gray-400">
+                    <span className="text-xs text-muted-foreground">
                       {formatDistanceToNow(new Date(alert.created_at), { addSuffix: true, locale: es })}
                     </span>
                     {alert.asset_id && (
@@ -158,7 +158,7 @@ export function AlertsTable({ initialAlerts }: Props) {
                 {!alert.is_read && (
                   <button
                     onClick={() => markRead(alert.id)}
-                    className="flex-shrink-0 text-gray-400 hover:text-gray-600 transition-colors mt-0.5 cursor-pointer"
+                    className="flex-shrink-0 text-muted-foreground hover:text-foreground transition-colors mt-0.5 cursor-pointer"
                     title="Marcar como leída"
                   >
                     <X className="h-4 w-4" />

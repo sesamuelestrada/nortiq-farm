@@ -28,7 +28,7 @@ export function NewAssetForm() {
         <div className="flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
           <CheckCircle2 className="h-8 w-8 text-green-600" />
         </div>
-        <h2 className="text-xl font-semibold text-gray-900">Activo registrado</h2>
+        <h2 className="text-xl font-semibold text-foreground">Activo registrado</h2>
         <Button onClick={() => router.push('/assets')} className="mt-2">
           Ver todos los activos
         </Button>
