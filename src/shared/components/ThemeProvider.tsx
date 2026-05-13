@@ -10,7 +10,7 @@ interface ThemeContextValue {
 }
 
 const ThemeContext = createContext<ThemeContextValue>({
-  theme: 'dark',
+  theme: 'light',
   setTheme: () => {},
 })
 
@@ -19,11 +19,11 @@ function applyTheme(t: Theme) {
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>('dark')
+  const [theme, setThemeState] = useState<Theme>('light')
 
   useEffect(() => {
     const stored = localStorage.getItem('nortiq-theme') as Theme | null
-    const resolved: Theme = stored === 'light' ? 'light' : 'dark'
+    const resolved: Theme = stored === 'dark' ? 'dark' : 'light'
     setThemeState(resolved)
     applyTheme(resolved)
   }, [])

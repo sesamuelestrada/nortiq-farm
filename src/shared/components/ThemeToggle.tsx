@@ -16,7 +16,7 @@ export function ThemeToggle() {
   return (
     <button
       onClick={() => setTheme(isDark ? 'light' : 'dark')}
-      className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-gray-500 hover:bg-white/5 hover:text-gray-300 dark:text-gray-500 dark:hover:text-gray-300 light:text-gray-500 light:hover:bg-black/5 light:hover:text-gray-700 transition-all duration-200 cursor-pointer"
+      className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-gray-500 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-white/5 hover:text-gray-700 dark:hover:text-gray-300 transition-all duration-200 cursor-pointer"
       title={isDark ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
     >
       {isDark ? (
