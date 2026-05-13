@@ -453,6 +453,7 @@ export function FloatingVoiceBar() {
                 <div className="space-y-2">
                   <p className="text-[10px] font-semibold text-gray-600 uppercase tracking-wider px-1">Comandos sugeridos</p>
                   {[
+                    '¿Cómo van los liners?',
                     '¿Qué activos están en mantenimiento?',
                     'Registrar servicio al Tractor JD 6155M',
                     '¿Qué mantenimientos vencen esta semana?',
