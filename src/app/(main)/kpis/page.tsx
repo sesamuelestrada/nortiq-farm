@@ -358,13 +358,13 @@ export default async function KpisPage() {
           ) : (
             <div className="space-y-2">
               {kpi.upcomingSchedules.map(s => (
-                <div key={s.id} className="flex items-center justify-between rounded-lg border border-border bg-gray-50/50 px-4 py-3">
+                <div key={s.id} className="flex items-center justify-between rounded-lg border border-border bg-muted/30 dark:bg-white/[0.03] px-4 py-3">
                   <div>
                     <p className="text-sm font-medium text-foreground">{s.title}</p>
                     <p className="text-xs text-muted-foreground">{s.assets?.name ?? '—'}</p>
                   </div>
                   {s.next_due_date && (
-                    <span className="rounded-full bg-amber-50 border border-amber-200 px-3 py-1 text-xs font-semibold text-amber-700">
+                    <span className="rounded-full bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/40 px-3 py-1 text-xs font-semibold text-amber-700 dark:text-amber-400">
                       {format(new Date(s.next_due_date), "d 'de' MMM", { locale: es })}
                     </span>
                   )}
