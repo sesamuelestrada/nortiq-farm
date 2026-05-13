@@ -59,14 +59,14 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: 'get_analytics',
-    description: 'Obtiene estadísticas y análisis: tipos de mantenimiento, costos por activo, tendencia mensual, activos que necesitan servicio próximo.',
+    description: 'Obtiene estadísticas y análisis: tipos de mantenimiento, costos por activo del MES ACTUAL, tendencia mensual, activos que necesitan servicio próximo.',
     input_schema: {
       type: 'object' as const,
       properties: {
         analysis_type: {
           type: 'string',
           enum: ['maintenance_types', 'cost_by_asset', 'monthly_trend', 'needs_service'],
-          description: 'maintenance_types=distribución de tipos, cost_by_asset=costos por equipo, monthly_trend=tendencia mensual, needs_service=activos con servicio próximo',
+          description: 'maintenance_types=distribución de tipos, cost_by_asset=costos por equipo ESTE MES (igual que el KPI), monthly_trend=tendencia mensual últimos 6 meses, needs_service=activos con servicio próximo',
         },
       },
       required: ['analysis_type'],
@@ -381,12 +381,29 @@ export async function executeTool(toolName: string, input: ToolInput): Promise<A
     }
 
     if (analysis_type === 'cost_by_asset') {
-      const data = await getCostByAsset()
+      // Filter by current month (same as KPI card) so data is consistent
+      const now = new Date()
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).toISOString()
+      const { data: logs } = await supabase
+        .from('maintenance_logs')
+        .select('cost_estimate, assets(name)')
+        .gte('created_at', monthStart)
+        .lte('created_at', monthEnd)
+      const map: Record<string, number> = {}
+      for (const log of logs ?? []) {
+        const name = ((log.assets as unknown as { name: string } | null)?.name ?? 'Desconocido').split('—')[0].trim()
+        map[name] = (map[name] ?? 0) + (log.cost_estimate ?? 0)
+      }
+      const chartData = Object.entries(map)
+        .map(([name, value]) => ({ name, value: Math.round(value) }))
+        .sort((a, b) => b.value - a.value)
+      if (!chartData.length) return [{ type: 'text', content: 'No hay registros de costo este mes.' }]
       return [{
         type: 'chart',
         chartType: 'bar',
-        title: 'Costo de mantenimiento por activo (MXN)',
-        data: data.map(d => ({ name: d.asset_name.split('—')[0].trim(), value: d.total_cost })),
+        title: `Costo de mantenimiento por activo — ${now.toLocaleString('es-MX', { month: 'long', year: 'numeric' })}`,
+        data: chartData,
         unit: 'MXN',
       }]
     }
