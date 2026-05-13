@@ -32,6 +32,9 @@ export async function POST(req: NextRequest) {
 
 export async function GET(req: NextRequest) {
   const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const assetId = req.nextUrl.searchParams.get('asset_id')
   if (!assetId) return NextResponse.json({ error: 'asset_id required' }, { status: 400 })
 

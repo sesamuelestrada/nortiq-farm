@@ -54,14 +54,16 @@ Thumbs.db
 .AppleDouble
 .LSOverride
 
-# Claude Code (internal skills/config — not for deployment repos)
-.claude/
+# Claude Code
+.claude/skills/**/node_modules
+.claude/plugins
 *.mcp.json
 !example.mcp.json
+.playwright-mcp/
+.superpowers/
+screenshot-*.png
+tsconfig.tsbuildinfo
 
 # Supabase
 supabase/.branches
 supabase/.temp
-
-# Playwright MCP logs
-.playwright-mcp/

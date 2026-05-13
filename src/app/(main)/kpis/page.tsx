@@ -1,8 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
 import { KpiCard } from '@/features/kpis/components/KpiCard'
-import { format, subMonths, startOfMonth, endOfMonth, differenceInDays } from 'date-fns'
+import { format, subMonths, startOfMonth, endOfMonth, differenceInDays, addDays } from 'date-fns'
 import { es } from 'date-fns/locale'
-import { DollarSign, TrendingUp, CheckCircle, AlertTriangle, Truck, Calendar, BarChart3, ShieldAlert, Wrench, Timer, Activity } from 'lucide-react'
+import { DollarSign, TrendingUp, CheckCircle, AlertTriangle, Truck, Calendar, BarChart3, ShieldAlert, Wrench, Timer, Activity, Milk } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import Link from 'next/link'
 import { MonthlyCostChartWrapper as MonthlyCostChart } from '@/features/kpis/components/MonthlyCostChartWrapper'
@@ -32,6 +32,7 @@ async function getKpiData() {
     { data: upcomingSchedules },
     { data: resolvedFindings90d },
     { data: recentLogs30d },
+    { data: linerConfigs },
   ] = await Promise.all([
     // This month: cost + asset breakdown
     supabase.from('maintenance_logs')
@@ -73,6 +74,9 @@ async function getKpiData() {
     supabase.from('maintenance_logs')
       .select('asset_id')
       .gte('created_at', thirtyDaysAgo.toISOString()),
+    supabase.from('liner_configs')
+      .select('asset_id, cows_count, milkings_per_day, liner_life_milkings, last_change_date, assets(name)')
+      .not('asset_id', 'is', null),
   ])
 
   // This month cost
@@ -158,6 +162,27 @@ async function getKpiData() {
   const operationalAssets = (assets ?? []).filter(a => a.status === 'operational').length
   const uptimePct = totalAssets > 0 ? Math.round((operationalAssets / totalAssets) * 100) : 0
 
+  // Liner stats
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const linerStats = (linerConfigs ?? []).map(cfg => {
+    const lastChange = new Date(cfg.last_change_date)
+    lastChange.setHours(0, 0, 0, 0)
+    const daysSince = Math.max(0, differenceInDays(today, lastChange))
+    const milkingsPerDay = cfg.cows_count * cfg.milkings_per_day
+    const completed = daysSince * milkingsPerDay
+    const pct = Math.min(100, (completed / cfg.liner_life_milkings) * 100)
+    const remaining = Math.max(0, cfg.liner_life_milkings - completed)
+    const remainingDays = milkingsPerDay > 0 ? Math.floor(remaining / milkingsPerDay) : 0
+    const assetRecord = cfg.assets as unknown as { name: string } | { name: string }[] | null
+    const assetName = Array.isArray(assetRecord) ? (assetRecord[0]?.name ?? 'Sistema de ordeña') : (assetRecord?.name ?? 'Sistema de ordeña')
+    return { pct, remainingDays, assetName, nextChange: addDays(today, remainingDays) }
+  })
+  const linerOk = linerStats.filter(s => s.pct < 75).length
+  const linerWarning = linerStats.filter(s => s.pct >= 75 && s.pct < 90).length
+  const linerUrgent = linerStats.filter(s => s.pct >= 90).length
+  const mostUrgentLiner = linerStats.sort((a, b) => b.pct - a.pct)[0] ?? null
+
   return {
     thisMonthCost,
     lastMonthCost,
@@ -184,6 +209,11 @@ async function getKpiData() {
     avgResolutionDays,
     findingsBySeverity,
     neglectedAssets,
+    linerTotal: linerStats.length,
+    linerOk,
+    linerWarning,
+    linerUrgent,
+    mostUrgentLiner,
   }
 }
 
@@ -277,6 +307,24 @@ export default async function KpisPage() {
             kpi.avgResolutionDays <= 7 ? 'amber' : 'red'
           }
         />
+        {kpi.linerTotal > 0 && (
+          <KpiCard
+            title="Estado de liners"
+            value={kpi.linerUrgent > 0 ? `${kpi.linerUrgent} urgente${kpi.linerUrgent > 1 ? 's' : ''}` : kpi.linerWarning > 0 ? `${kpi.linerWarning} en aviso` : 'Al día'}
+            subtitle={`${kpi.linerOk} OK · ${kpi.linerWarning} aviso · ${kpi.linerUrgent} urgente`}
+            icon={<Milk className="h-4.5 w-4.5" />}
+            accent={kpi.linerUrgent > 0 ? 'red' : kpi.linerWarning > 0 ? 'amber' : 'emerald'}
+          />
+        )}
+        {kpi.mostUrgentLiner && (
+          <KpiCard
+            title="Próximo cambio de liners"
+            value={kpi.mostUrgentLiner.remainingDays === 0 ? 'HOY' : `${kpi.mostUrgentLiner.remainingDays}d`}
+            subtitle={`${kpi.mostUrgentLiner.assetName} — ${format(kpi.mostUrgentLiner.nextChange, "d 'de' MMM", { locale: es })}`}
+            icon={<Milk className="h-4.5 w-4.5" />}
+            accent={kpi.mostUrgentLiner.remainingDays === 0 ? 'red' : kpi.mostUrgentLiner.remainingDays <= 5 ? 'amber' : 'emerald'}
+          />
+        )}
       </div>
 
       {/* Hallazgos por severidad */}

@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { FindingsList } from '@/features/today/components/FindingsList'
 import { AlertsTable } from '@/features/alerts/components/AlertsTable'
-import { format, differenceInDays } from 'date-fns'
+import { format, differenceInDays, addDays } from 'date-fns'
 import { es } from 'date-fns/locale'
 import {
   ClipboardList,
@@ -10,11 +10,20 @@ import {
   CheckCircle2,
   AlertTriangle,
   Clock,
+  Milk,
 } from 'lucide-react'
 import Link from 'next/link'
 import type { FindingItem } from '@/features/today/components/FindingsList'
 
 const SEVERITY_ORDER = { critical: 0, high: 1, medium: 2, low: 3 }
+
+interface LinerAlert {
+  asset_id: string
+  asset_name: string
+  pct: number
+  remainingDays: number
+  nextChangeDate: Date
+}
 
 async function getTodayData() {
   const supabase = await createClient()
@@ -25,6 +34,7 @@ async function getTodayData() {
     { data: rawFindings },
     { data: alerts },
     { data: schedules },
+    { data: linerConfigs },
   ] = await Promise.all([
     supabase
       .from('maintenance_findings')
@@ -44,6 +54,10 @@ async function getTodayData() {
       .or(`next_due_date.lte.${in7Days.toISOString().split('T')[0]},next_due_date.is.null`)
       .order('next_due_date', { ascending: true })
       .limit(30),
+    supabase
+      .from('liner_configs')
+      .select('asset_id, cows_count, milkings_per_day, liner_life_milkings, last_change_date, assets(name)')
+      .not('asset_id', 'is', null),
   ])
 
   const findings: FindingItem[] = (rawFindings ?? [])
@@ -78,9 +92,76 @@ async function getTodayData() {
     return { ...s, asset_name: asset?.name ?? '—', daysLeft, hoursLeft }
   }).sort((a, b) => (a.daysLeft ?? 999) - (b.daysLeft ?? 999))
 
-  const totalPending = findings.length + (alerts ?? []).length + urgentSchedules.length
+  // Liner alerts: >= 75% vida útil
+  const todayMidnight = new Date()
+  todayMidnight.setHours(0, 0, 0, 0)
+  const linerAlerts: LinerAlert[] = (linerConfigs ?? [])
+    .map(cfg => {
+      const lastChange = new Date(cfg.last_change_date)
+      lastChange.setHours(0, 0, 0, 0)
+      const daysSince = Math.max(0, differenceInDays(todayMidnight, lastChange))
+      const milkingsPerDay = cfg.cows_count * cfg.milkings_per_day
+      const completed = daysSince * milkingsPerDay
+      const pct = Math.min(100, (completed / cfg.liner_life_milkings) * 100)
+      const remaining = Math.max(0, cfg.liner_life_milkings - completed)
+      const remainingDays = milkingsPerDay > 0 ? Math.floor(remaining / milkingsPerDay) : 0
+      const assetRecord = cfg.assets as unknown as { name: string } | { name: string }[] | null
+      const asset_name = Array.isArray(assetRecord) ? (assetRecord[0]?.name ?? 'Sistema de ordeña') : (assetRecord?.name ?? 'Sistema de ordeña')
+      return { asset_id: cfg.asset_id!, asset_name, pct, remainingDays, nextChangeDate: addDays(todayMidnight, remainingDays) }
+    })
+    .filter(s => s.pct >= 75)
+    .sort((a, b) => b.pct - a.pct)
 
-  return { findings, alerts: alerts ?? [], urgentSchedules, totalPending }
+  // Auto-crear alertas críticas cuando liner >= 90%, auto-cerrar cuando < 75%
+  const allLinerStats = (linerConfigs ?? []).map(cfg => {
+    const lastChange = new Date(cfg.last_change_date)
+    lastChange.setHours(0, 0, 0, 0)
+    const daysSince = Math.max(0, differenceInDays(todayMidnight, lastChange))
+    const milkingsPerDay = cfg.cows_count * cfg.milkings_per_day
+    const completed = daysSince * milkingsPerDay
+    const pct = Math.min(100, (completed / cfg.liner_life_milkings) * 100)
+    const assetRecord = cfg.assets as unknown as { name: string } | { name: string }[] | null
+    const asset_name = Array.isArray(assetRecord) ? (assetRecord[0]?.name ?? 'Sistema de ordeña') : (assetRecord?.name ?? 'Sistema de ordeña')
+    return { asset_id: cfg.asset_id!, asset_name, pct }
+  })
+
+  const criticalLiners = allLinerStats.filter(l => l.pct >= 90)
+  const okLiners = allLinerStats.filter(l => l.pct < 75)
+
+  if (criticalLiners.length > 0 || okLiners.length > 0) {
+    const allAssetIds = allLinerStats.map(l => l.asset_id)
+    const { data: existingLinerAlerts } = await supabase
+      .from('alerts')
+      .select('id, asset_id')
+      .in('asset_id', allAssetIds)
+      .ilike('message', '%liner%')
+      .eq('is_read', false)
+
+    const assetsWithAlert = new Set((existingLinerAlerts ?? []).map(a => a.asset_id))
+
+    // Crear alertas para liners críticos sin alerta activa
+    const toCreate = criticalLiners
+      .filter(l => !assetsWithAlert.has(l.asset_id))
+      .map(l => ({
+        asset_id: l.asset_id,
+        type: 'critical',
+        message: `Liners de ${l.asset_name} al ${Math.round(l.pct)}% de vida útil — cambio urgente requerido.`,
+        is_read: false,
+      }))
+    if (toCreate.length > 0) await supabase.from('alerts').insert(toCreate)
+
+    // Auto-cerrar alertas de liners que ya fueron cambiados (pct < 75%)
+    const toDismiss = (existingLinerAlerts ?? [])
+      .filter(a => okLiners.some(l => l.asset_id === a.asset_id))
+      .map(a => a.id)
+    if (toDismiss.length > 0) {
+      await supabase.from('alerts').update({ is_read: true }).in('id', toDismiss)
+    }
+  }
+
+  const totalPending = findings.length + (alerts ?? []).length + urgentSchedules.length + linerAlerts.length
+
+  return { findings, alerts: alerts ?? [], urgentSchedules, totalPending, linerAlerts }
 }
 
 const subsystemLabels: Record<string, string> = {
@@ -89,7 +170,7 @@ const subsystemLabels: Record<string, string> = {
 }
 
 export default async function HoyPage() {
-  const { findings, alerts, urgentSchedules, totalPending } = await getTodayData()
+  const { findings, alerts, urgentSchedules, totalPending, linerAlerts } = await getTodayData()
 
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-8">
@@ -205,6 +286,56 @@ export default async function HoyPage() {
           </div>
         )}
       </section>
+
+      {/* SECTION 2.5: Liners urgentes */}
+      {linerAlerts.length > 0 && (
+        <section className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Milk className="h-4 w-4 text-muted-foreground" />
+            <h2 className="text-sm font-semibold text-foreground">Liners — Cambio requerido</h2>
+            <span className="rounded-full bg-amber-100 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/40 px-2 py-0.5 text-[11px] font-bold text-amber-700 dark:text-amber-400">
+              {linerAlerts.length}
+            </span>
+          </div>
+          <div className="space-y-2">
+            {linerAlerts.map(l => {
+              const isUrgent = l.pct >= 90
+              return (
+                <div
+                  key={l.asset_id}
+                  className={`flex items-center gap-4 rounded-xl border bg-card px-4 py-3.5 ${
+                    isUrgent
+                      ? 'border-l-4 border-l-red-500 border-border'
+                      : 'border-l-4 border-l-amber-400 border-border'
+                  }`}
+                >
+                  <div className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg ${isUrgent ? 'bg-red-50 dark:bg-red-950/40' : 'bg-amber-50 dark:bg-amber-950/40'}`}>
+                    <Milk className={`h-4 w-4 ${isUrgent ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'}`} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">Cambio de liners</p>
+                    <p className="text-xs text-muted-foreground">{l.asset_name} · {Math.round(l.pct)}% vida útil consumida</p>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <span className={`text-xs font-bold ${isUrgent ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                      {l.remainingDays === 0 ? 'Hoy' : `En ${l.remainingDays} días`}
+                    </span>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      {format(l.nextChangeDate, "d MMM", { locale: es })}
+                    </p>
+                  </div>
+                  <Link
+                    href={`/assets/${l.asset_id}`}
+                    className="flex-shrink-0 rounded-lg border border-border bg-muted/30 px-2.5 py-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+                  >
+                    Ver activo
+                  </Link>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      )}
 
       {/* SECTION 3: Alertas sin leer */}
       <section className="space-y-3">
