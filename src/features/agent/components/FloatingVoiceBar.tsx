@@ -10,11 +10,36 @@ import type { ConversationHistoryItem } from '@/lib/ai/agent-runner'
 
 function normalizeForSpeech(text: string): string {
   return text
+    // Montos en pesos — $18,000 → 18 mil pesos / $108,900 → 108 mil 900 pesos
+    .replace(/\$(\d{1,3}),(\d{3}),(\d{3})/g, (_, a, b, c) => {
+      const n = parseInt(a) * 1_000_000 + parseInt(b) * 1_000 + parseInt(c)
+      return `${n.toLocaleString('es-MX')} pesos`
+    })
+    .replace(/\$(\d{1,3}),(\d{3})/g, (_, miles, cientos) => {
+      const n = parseInt(miles) * 1000 + parseInt(cientos)
+      if (parseInt(cientos) === 0) return `${miles} mil pesos`
+      return `${miles} mil ${cientos} pesos`
+    })
+    .replace(/\$(\d+)/g, '$1 pesos')
+    // Porcentajes — 90% → 90 por ciento
+    .replace(/(\d+)%/g, '$1 por ciento')
+    // Horas — 500h → 500 horas
+    .replace(/(\d+)h\b/g, '$1 horas')
+    // km — 10,000km → 10 mil kilómetros
+    .replace(/(\d{1,3}),(\d{3})km/g, (_, m, c) => `${m} mil ${parseInt(c) > 0 ? c : ''} kilómetros`.trim())
+    .replace(/(\d+)km\b/g, '$1 kilómetros')
+    // Marcas y modelos agrícolas
     .replace(/\bJD\b/g, 'J D')
     .replace(/\bNH\b/g, 'N H')
-    .replace(/\b([A-Z])(\d{3,})\b/g, '$1 $2')   // T680 → T 680
-    .replace(/\b([A-Z])(\d{1,2})\b/g, '$1 $2')   // T7 → T 7
-    .replace(/(\d{3,})([A-Z])\b/g, '$1 $2')       // 6155M → 6155 M
+    .replace(/\bGEA\b/g, 'G E A')
+    .replace(/\bMXN\b/g, 'pesos mexicanos')
+    // Separar letra+número — T680 → T 680, 6155M → 6155 M
+    .replace(/\b([A-Z])(\d{3,})\b/g, '$1 $2')
+    .replace(/\b([A-Z])(\d{1,2})\b/g, '$1 $2')
+    .replace(/(\d{3,})([A-Z])\b/g, '$1 $2')
+    // Limpiar espacios dobles
+    .replace(/\s{2,}/g, ' ')
+    .trim()
 }
 
 function stripMarkdown(text: string): string {
