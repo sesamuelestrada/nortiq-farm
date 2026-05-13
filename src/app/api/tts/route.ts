@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
   const audio = await openai.audio.speech.create({
     model: 'tts-1-hd',
-    voice: 'nova',
+    voice: 'onyx',
     input: text,
     response_format: 'mp3',
     speed: 1.0,
